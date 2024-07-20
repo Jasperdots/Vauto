@@ -1,90 +1,81 @@
-@echo off
+#!/bin/bash
 
-REM Check if the installation log file exists
-if exist "C:\install.log" (
-    echo Installation already completed.
-    exit /b 0
-)
+set -euo pipefail
 
-REM Install OpenSSH server
-powershell.exe -command "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0"
-powershell.exe -command "start-service sshd"
-powershell.exe -command "set-service -name sshd -startuptype 'automatic'"
-powershell.exe -command "New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22"
-powershell.exe -command "get-service -name sshd"
-powershell.exe -command "netstat -an | findstr :22"
+IP=$1
+USER=$2
+PASS=$3
 
-mkdir C:\Users\Administrator\Desktop\test
+# Log the received arguments (for debugging)
+echo "IP: $IP"
+echo "USER: $USER"
+echo "PASS: $PASS"
 
-REM Download PSTools using wget
-powershell.exe -command "Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/PSTools.zip' -OutFile 'C:\Users\Administrator\Desktop\test\PSTools.zip'"
 
-REM Extract the archive
-powershell.exe -command "Expand-Archive -Path 'C:\Users\Administrator\Desktop\test\PSTools.zip' -DestinationPath 'C:\Windows\System32\PStools\'"
+# Variables
+RDP_USER="$USER"
+RDP_PASSWORD="$PASS"
+RDP_IP="$IP"
+RDP_WINDOW_TITLE="FreeRDP: $RDP_IP"
+BATCH_SCRIPT_PATH="https://github.com/Jasperdots/Vauto"
+BATCH_SCRIPT_DIR="C:\\Users\\Administrator\\Desktop"
 
-REM Add the extracted directory to PATH
-setx PATH "%PATH%;C:\Windows\System32\PStools;C:\Windows\System32\OpenSSH" /M
+# Connect to RDP session
+xfreerdp /u:$RDP_USER /p:$RDP_PASSWORD /v:$RDP_IP /cert:ignore &
 
-C:\Windows\System32\PStools\psexec -accepteula
+# Wait for the RDP session to start
+sleep 10
 
-del /f C:\Users\Administrator\Desktop\test
-rmdir C:\Users\Administrator\Desktop\test 
-del C:\Users\Administrator\Desktop\setup.bat
-rd /s /q C:\$Recycle.Bin
+# Get the window ID of the RDP session
+WINDOW_ID=$(wmctrl -l | grep "$RDP_WINDOW_TITLE" | awk '{print $1}')
 
-ECHO Downloading Python Installer
+# Check if the window ID is found
+if [ -z "$WINDOW_ID" ]; then
+  echo "RDP window not found."
+  exit 1
+fi
 
-REM Define the URL for the latest Python installer
-SET PYTHON_URL=https://www.python.org/ftp/python/3.12.3/python-3.12.3-amd64.exe
+wait_for_cmd() {
+  local retries=10
+  local delay=1
 
-REM Define the output path
-SET OUTPUT_PATH=%USERPROFILE%\Downloads\python-installer.exe
+  for ((i=0; i<retries; i++)); do
+    # Check if the command prompt is ready (by checking window title)
+    wmctrl -l | grep -q "$CMD_PROMPT_TITLE" && return 0
+    sleep $delay
+  done
 
-REM Download Python installer using wget
-IF NOT EXIST %USERPROFILE%\Downloads\ (
-    mkdir %USERPROFILE%\Downloads
-)
+  echo "Command Prompt did not become ready in time."
+  return 1
+}
 
-ECHO Fetching Python installer from %PYTHON_URL%
-powershell.exe -command "Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%OUTPUT_PATH%'"
+# Open Notepad using Win+R and type 'notepad'
+xdotool key --window $WINDOW_ID super+r
+sleep 2
+xdotool type --window $WINDOW_ID "cmd"
+xdotool key --window $WINDOW_ID Return
+sleep 5
 
-ECHO Installing Python silently
-%OUTPUT_PATH% /quiet InstallAllUsers=1 PrependPath=1
 
-REM Clean up the installer
-DEL %OUTPUT_PATH%
+# Save the batch script file
+xdotool key --window $WINDOW_ID ctrl+s
+sleep 2
+xdotool type --window $WINDOW_ID "curl -o setup.bat $BATCH_SCRIPT_PATH"
+xdotool key --window $WINDOW_ID Return
+sleep 2
 
-REM Verify Python installation
-ECHO Verifying Python installation
-python --version
-IF %ERRORLEVEL% EQU 0 (
-    ECHO Python has been successfully added to PATH
-) ELSE (
-    ECHO Python installation or PATH addition failed
-)
 
-SETLOCAL
+# Open Command Prompt and run the batch script
+xdotool key --window $WINDOW_ID super+r
+sleep 2
+xdotool type --window $WINDOW_ID "cmd"
+xdotool key --window $WINDOW_ID Return
+sleep 4
+xdotool type --window $WINDOW_ID "setup.bat"
+xdotool key --window $WINDOW_ID Return
 
-:: Variables
-set INSTALLER_URL=https://github.com/git-for-windows/git/releases/download/v2.39.0.windows.1/Git-2.39.0-64-bit.exe
-set FILENAME=GitInstaller.exe
 
-:: Download Git Installer
-echo Downloading Git...
-powershell -command "Invoke-WebRequest '%INSTALLER_URL%' -OutFile '%FILENAME%'"
+sleep 20
 
-:: Install Git silently
-echo Installing Git...
-start /wait %FILENAME% /VERYSILENT /NORESTART
-
-:: Clean up installation file
-echo Cleaning up...
-del /f /q %FILENAME%
-
-echo Installation Complete!
-ENDLOCAL
-
-REM Create an installation log file
-echo Installation completed on %date% at %time% > "C:\install.log"
-
-shutdown /f /r /t 0
+# Close the RDP window
+xdotool windowclose "$WINDOW_ID"
